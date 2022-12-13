@@ -1,0 +1,11 @@
+- open: 'https://serenaandlily.okta.com/'
+- wait: '[aria-label="launch app AWS Single Sign-on"]'
+- click
+- wait: 'portal-application'
+- click
+- wait: 'portal-instance'
+- where:
+- text:
+- contains: 'AWS.Staging'
+- click
+- wait: 'portal-profile #temp-credentials-button'
