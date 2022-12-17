@@ -5,7 +5,7 @@ import fs from 'fs/promises'
 import yaml from 'js-yaml'
 import { isEmpty } from 'lodash'
 import { join, resolve } from 'path'
-import puppeteer, { Browser, ElementHandle, Page, Target } from 'puppeteer'
+import puppeteer, { Browser, ElementHandle, Page, PuppeteerLifeCycleEvent, Target } from 'puppeteer'
 import readline from 'readline'
 import { Readable } from 'stream'
 import { promisify } from 'util'
@@ -35,7 +35,7 @@ type PasswordStatement = ['password', { account: string, service: string, name: 
 type ReadStatement = ['read', { question: string, name: string }]
 type SleepStatement = ['sleep', number]
 type TypeStatement = ['type', string | { name: string }]
-type WaitNavStatement = ['wait-navigation']
+type WaitNavStatement = ['wait-navigation', PuppeteerLifeCycleEvent | undefined]
 type WaitNewTargetStatement = ['wait-new-target', string]
 type WaitStatement = ['wait', Selector | Selector[]]
 
@@ -150,9 +150,9 @@ const handlers: Record<Keyword, Handler> = {
       }
     }
   },
-  'wait-navigation': async (statement: WaitNavStatement, context) => {
+  'wait-navigation': async ([, waitUntil = 'networkidle0']: WaitNavStatement, context) => {
     await context.pages[0].waitForNavigation({
-      waitUntil: 'networkidle0'
+      waitUntil
     })
   },
   'wait-new-target': async (statement: WaitNewTargetStatement, context) => {
