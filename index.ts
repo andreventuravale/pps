@@ -11,6 +11,7 @@ import { Readable } from 'stream'
 import { promisify } from 'util'
 
 const kc = require('keychain')
+
 const gp = promisify(kc.getPassword).bind(kc)
 const sp = promisify(kc.setPassword).bind(kc)
 
@@ -25,12 +26,12 @@ type url = string
 
 type Selector = string | { text: string }
 
+type CaptureStatement = ['capture', string]
 type ClearStatement = ['clear', string]
 type ClickStatement = ['click', string | undefined]
-type CopyStatement = ['copy', string]
 type FocusStatement = ['focus', string]
 type OpenStatement = ['open', url]
-type PwdStatement = ['pwd', { account: string, service: string, name: string }]
+type PasswordStatement = ['password', { account: string, service: string, name: string }]
 type ReadStatement = ['read', { question: string, name: string }]
 type SleepStatement = ['sleep', number]
 type TypeStatement = ['type', string | { name: string }]
@@ -39,12 +40,12 @@ type WaitNewTargetStatement = ['wait-target', string]
 type WaitStatement = ['wait', Selector | Selector[]]
 
 type Statement =
+  | CaptureStatement
   | ClearStatement
   | ClickStatement
-  | CopyStatement
   | FocusStatement
   | OpenStatement
-  | PwdStatement
+  | PasswordStatement
   | ReadStatement
   | SleepStatement
   | TypeStatement
@@ -70,29 +71,18 @@ type Context = {
 type Handler<S extends Statement = any> = (statement: S, context: Context) => Promise<void>
 
 const handlers: Record<Keyword, Handler> = {
-  open: async ([, url]: OpenStatement, context) => {
-    context.pages.unshift(await context.browser.newPage())
+  capture: async (statement: CaptureStatement, context) => {
+    const bc = await context.browser.defaultBrowserContext()
 
-    context.targets.unshift(context.pages[0].target())
+    const url = new URL(context.pages[0].url())
 
-    await context.pages[0].goto(url, { waitUntil: 'networkidle0' })
-  },
-  pwd: async ([, { account, service, name }]: PwdStatement, context) => {
-    try {
-      const pwd = await gp({ account, service, type: 'internet' })
+    await bc.overridePermissions(url.origin, ['clipboard-write', 'clipboard-read'])
 
-      context.vars[name] = pwd
-    } catch (err: any) {
-      if (!isEmpty(err) && err.code !== 'PasswordNotFound') {
-        throw err
-      }
+    const copiedText = (await context.pages[0].evaluate(`(async () => await navigator.clipboard.readText())()`)) as string
 
-      const answer = await question('Enter the password: ')
+    const key = statement[1]
 
-      await sp({ account, service, type: 'internet', password: answer })
-
-      context.vars[name] = answer
-    }
+    context.output[key] = copiedText
   },
   clear: async (statement: ClearStatement, context) => {
     await context.pages[0].evaluate((sel: string) => {
@@ -110,6 +100,30 @@ const handlers: Record<Keyword, Handler> = {
   focus: async (statement: FocusStatement, context) => {
     await context.pages[0].focus(statement[1])
   },
+  open: async ([, url]: OpenStatement, context) => {
+    context.pages.unshift(await context.browser.newPage())
+
+    context.targets.unshift(context.pages[0].target())
+
+    await context.pages[0].goto(url, { waitUntil: 'networkidle0' })
+  },
+  password: async ([, { account, service, name }]: PasswordStatement, context) => {
+    try {
+      const password = await gp({ account, service, type: 'internet' })
+
+      context.vars[name] = password
+    } catch (err: any) {
+      if (!isEmpty(err) && err.code !== 'PasswordNotFound') {
+        throw err
+      }
+
+      const answer = await question('Enter the password: ')
+
+      await sp({ account, service, type: 'internet', password: answer })
+
+      context.vars[name] = answer
+    }
+  },
   read: async (statement: ReadStatement, context) => {
     const value = await context.pages[0].evaluate(question => {
       return window.prompt(question)
@@ -117,28 +131,15 @@ const handlers: Record<Keyword, Handler> = {
 
     context.vars[statement[1].name] = value
   },
+  sleep: async (statement: SleepStatement, context) => {
+    await context.pages[0].waitForTimeout(statement[1] * 1000)
+  },
   type: async (statement: TypeStatement, context) => {
     if (typeof statement[1] === 'string') {
       await context.query?.type(statement[1])
     } else {
       await context.query?.type(context.vars[statement[1].name])
     }
-  },
-  sleep: async (statement: SleepStatement, context) => {
-    await context.pages[0].waitForTimeout(statement[1] * 1000)
-  },
-  copy: async (statement: CopyStatement, context) => {
-    const bc = await context.browser.defaultBrowserContext()
-
-    const url = new URL(context.pages[0].url())
-
-    await bc.overridePermissions(url.origin, ['clipboard-write', 'clipboard-read'])
-
-    const copiedText = (await context.pages[0].evaluate(`(async () => await navigator.clipboard.readText())()`)) as string
-
-    const key = statement[1]
-
-    context.output[key] = copiedText
   },
   wait: async (statement: WaitStatement, context) => {
     if (typeof statement[1] === 'string') {
@@ -180,9 +181,9 @@ const handlers: Record<Keyword, Handler> = {
 }
 
 async function run() {
-  const sourcePath = resolve(join(process.cwd(), process.argv[2]))
+  const inputPath = resolve(join(process.cwd(), process.argv[2]))
 
-  const input = await fs.readFile(sourcePath, 'utf-8')
+  const input = await fs.readFile(inputPath, 'utf-8')
 
   const source = yaml.load(input) as object[]
 
@@ -206,18 +207,21 @@ async function run() {
 
   for (const statement of script) {
     const keyword = statement[0]
+
     if (!(keyword in handlers)) {
       throw new Error(`(line=${line} statement=${JSON.stringify(statement)}) Keyword not implemented: ${keyword}.`)
     }
+
     console.group(`(line=${line}) ${JSON.stringify(statement)}`)
+
     try {
       await handlers[statement[0]](statement, context)
     } catch (error: any) {
       console.log(`Error: ${error.message}`)
     } finally {
       console.groupEnd()
-      console.log()
     }
+
     line++
   }
 
@@ -231,7 +235,7 @@ async function run() {
     output.kill('SIGTERM')
 
     process.exit(0)
-  }, 3000).unref()
+  }, 1500).unref()
 }
 
 run().catch(error => {
