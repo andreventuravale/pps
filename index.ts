@@ -26,7 +26,7 @@ type url = string
 
 type Selector = string | { text: string }
 
-type CaptureStatement = ['capture', string]
+type CaptureClipboardStatement = ['capture-clipboard', string]
 type ClearStatement = ['clear', string]
 type ClickStatement = ['click', string | undefined]
 type FocusStatement = ['focus', string]
@@ -35,12 +35,12 @@ type PasswordStatement = ['password', { account: string, service: string, name: 
 type ReadStatement = ['read', { question: string, name: string }]
 type SleepStatement = ['sleep', number]
 type TypeStatement = ['type', string | { name: string }]
-type WaitNavStatement = ['wait-nav']
-type WaitNewTargetStatement = ['wait-target', string]
+type WaitNavStatement = ['wait-navigation']
+type WaitNewTargetStatement = ['wait-new-target', string]
 type WaitStatement = ['wait', Selector | Selector[]]
 
 type Statement =
-  | CaptureStatement
+  | CaptureClipboardStatement
   | ClearStatement
   | ClickStatement
   | FocusStatement
@@ -71,7 +71,7 @@ type Context = {
 type Handler<S extends Statement = any> = (statement: S, context: Context) => Promise<void>
 
 const handlers: Record<Keyword, Handler> = {
-  capture: async (statement: CaptureStatement, context) => {
+  'capture-clipboard': async (statement: CaptureClipboardStatement, context) => {
     const bc = await context.browser.defaultBrowserContext()
 
     const url = new URL(context.pages[0].url())
@@ -150,12 +150,12 @@ const handlers: Record<Keyword, Handler> = {
       }
     }
   },
-  'wait-nav': async (statement: WaitStatement, context) => {
+  'wait-navigation': async (statement: WaitNavStatement, context) => {
     await context.pages[0].waitForNavigation({
       waitUntil: 'networkidle0'
     })
   },
-  'wait-target': async (statement: WaitStatement, context) => {
+  'wait-new-target': async (statement: WaitNewTargetStatement, context) => {
     const target = await context.browser.waitForTarget(async target => (await (await target.page())?.title()) === statement[1])
 
     const page = await target.page()
