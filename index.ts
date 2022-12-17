@@ -1,45 +1,188 @@
+#!/usr/bin/env ts-node
 
-import fs from "fs/promises";
-import yaml from "js-yaml";
-import ora from "ora";
+import { spawn } from 'child_process'
+import fs from 'fs/promises'
+import yaml from 'js-yaml'
+import { isEmpty } from 'lodash'
+import { join, resolve } from 'path'
+import puppeteer, { Browser, ElementHandle, Page, Target } from 'puppeteer'
+import readline from 'readline'
+import { Readable } from 'stream'
+import { promisify } from 'util'
 
-type URL = string
+const kc = require('keychain')
+const gp = promisify(kc.getPassword).bind(kc)
+const sp = promisify(kc.setPassword).bind(kc)
 
-type Expr = string
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+})
 
-type ClickStatement = ['click']
-type OpenStatement = ['open', URL]
-type WaitStatement = ['wait', Expr]
+const question = promisify(rl.question).bind(rl) as unknown as (question: string) => Promise<string>
+
+type url = string
+
+type Selector = string | { text: string }
+
+type ClearStatement = ['clear', string]
+type ClickStatement = ['click', string | undefined]
+type CopyStatement = ['copy', string]
+type FocusStatement = ['focus', string]
+type OpenStatement = ['open', url]
+type PwdStatement = ['pwd', { account: string, service: string, name: string }]
+type ReadStatement = ['read', { question: string, name: string }]
+type SleepStatement = ['sleep', number]
+type TypeStatement = ['type', string | { name: string }]
+type WaitNavStatement = ['wait-nav']
+type WaitNewTargetStatement = ['wait-target', string]
+type WaitStatement = ['wait', Selector | Selector[]]
 
 type Statement =
-  | OpenStatement
+  | ClearStatement
   | ClickStatement
+  | CopyStatement
+  | FocusStatement
+  | OpenStatement
+  | PwdStatement
+  | ReadStatement
+  | SleepStatement
+  | TypeStatement
+  | WaitNavStatement
+  | WaitNewTargetStatement
   | WaitStatement
 
 type Keyword = Statement[0]
 
 type Script = Statement[]
 
-type Handler = (script: Script, statement: Statement) => Promise<void>
+type Query = ElementHandle<Element> | null
+
+type Context = {
+  browser: Browser
+  output: Record<string, string>
+  pages: Page[]
+  query?: Query
+  targets: Target[]
+  vars: Record<string, string>
+}
+
+type Handler<S extends Statement = any> = (statement: S, context: Context) => Promise<void>
 
 const handlers: Record<Keyword, Handler> = {
-  open: async (script, statement) => {
-    const spinner = ora()
-    spinner.start(JSON.stringify(statement))
+  open: async ([, url]: OpenStatement, context) => {
+    context.pages.unshift(await context.browser.newPage())
+
+    context.targets.unshift(context.pages[0].target())
+
+    await context.pages[0].goto(url, { waitUntil: 'networkidle0' })
+  },
+  pwd: async ([, { account, service, name }]: PwdStatement, context) => {
     try {
-      spinner.succeed()
-    } catch (error: any) {
-      spinner.fail(error.message)
+      const pwd = await gp({ account, service, type: 'internet' })
+
+      context.vars[name] = pwd
+    } catch (err: any) {
+      if (!isEmpty(err) && err.code !== 'PasswordNotFound') {
+        throw err
+      }
+
+      const answer = await question('Enter the password: ')
+
+      await sp({ account, service, type: 'internet', password: answer })
+
+      context.vars[name] = answer
     }
   },
-  click: async (script, statement) => {
+  clear: async (statement: ClearStatement, context) => {
+    await context.pages[0].evaluate((sel: string) => {
+      const el = document.querySelector<HTMLInputElement>(sel) ?? undefined
+      el && (el.value = '')
+    }, statement[1])
   },
-  wait: async (script, statement) => {
+  click: async (statement: ClickStatement, context) => {
+    if (typeof statement[1] === 'string') {
+      await context.pages[0].click(statement[1])
+    } else {
+      await context.query?.click()
+    }
+  },
+  focus: async (statement: FocusStatement, context) => {
+    await context.pages[0].focus(statement[1])
+  },
+  read: async (statement: ReadStatement, context) => {
+    const value = await context.pages[0].evaluate(question => {
+      return window.prompt(question)
+    }, statement[1].question) as string
+
+    context.vars[statement[1].name] = value
+  },
+  type: async (statement: TypeStatement, context) => {
+    if (typeof statement[1] === 'string') {
+      await context.query?.type(statement[1])
+    } else {
+      await context.query?.type(context.vars[statement[1].name])
+    }
+  },
+  sleep: async (statement: SleepStatement, context) => {
+    await context.pages[0].waitForTimeout(statement[1] * 1000)
+  },
+  copy: async (statement: CopyStatement, context) => {
+    const bc = await context.browser.defaultBrowserContext()
+
+    const url = new URL(context.pages[0].url())
+
+    await bc.overridePermissions(url.origin, ['clipboard-write', 'clipboard-read'])
+
+    const copiedText = (await context.pages[0].evaluate(`(async () => await navigator.clipboard.readText())()`)) as string
+
+    const key = statement[1]
+
+    context.output[key] = copiedText
+  },
+  wait: async (statement: WaitStatement, context) => {
+    if (typeof statement[1] === 'string') {
+      context.query = await context.pages[0].waitForSelector(statement[1], { visible: true })
+    } else {
+      if ('text' in statement[1]) {
+        context.query = await context.pages[0].waitForXPath(`//*[contains(.,'${(statement[1] as any).text}')]`, { visible: true }) as any
+      }
+    }
+  },
+  'wait-nav': async (statement: WaitStatement, context) => {
+    await context.pages[0].waitForNavigation({
+      waitUntil: 'networkidle0'
+    })
+  },
+  'wait-target': async (statement: WaitStatement, context) => {
+    const target = await context.browser.waitForTarget(async target => (await (await target.page())?.title()) === statement[1])
+
+    const page = await target.page()
+
+    if (page === null) {
+      throw new Error('page is null')
+    }
+
+    await page.bringToFront()
+
+    context.pages.unshift(page)
+
+    context.targets.unshift(target)
+
+    page.on('close', () => {
+      const index = context.pages.indexOf(page)
+
+      context.targets.splice(index, 1)
+
+      context.pages.splice(index, 1)
+    })
   }
 }
 
 async function run() {
-  const input = await fs.readFile(`${__dirname}/input.yaml`, 'utf-8')
+  const sourcePath = resolve(join(process.cwd(), process.argv[2]))
+
+  const input = await fs.readFile(sourcePath, 'utf-8')
 
   const source = yaml.load(input) as object[]
 
@@ -51,19 +194,44 @@ async function run() {
           : Object.entries(statement)
     ) as Script
 
-  console.log(input, source, script)
-
   let line = 1
+
+  const context: Context = {
+    browser: await puppeteer.launch({ headless: false }),
+    output: {},
+    pages: [],
+    targets: [],
+    vars: {}
+  }
 
   for (const statement of script) {
     const keyword = statement[0]
-    console.log(keyword)
     if (!(keyword in handlers)) {
       throw new Error(`(line=${line} statement=${JSON.stringify(statement)}) Keyword not implemented: ${keyword}.`)
     }
-    handlers[statement[0]](script, statement)
+    console.group(`(line=${line}) ${JSON.stringify(statement)}`)
+    try {
+      await handlers[statement[0]](statement, context)
+    } catch (error: any) {
+      console.log(`Error: ${error.message}`)
+    } finally {
+      console.groupEnd()
+      console.log()
+    }
     line++
   }
+
+  await context.browser.close()
+
+  const output = spawn('ts-node', ['output.ts'], { cwd: process.cwd(), stdio: 'pipe' })
+
+  Readable.from(JSON.stringify(context.output)).pipe(output.stdin)
+
+  setTimeout(() => {
+    output.kill('SIGTERM')
+
+    process.exit(0)
+  }, 3000).unref()
 }
 
 run().catch(error => {
