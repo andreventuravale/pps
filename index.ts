@@ -229,13 +229,11 @@ async function run() {
 
   const output = spawn('ts-node', ['output.ts'], { cwd: process.cwd(), stdio: 'pipe' })
 
+  output.on('exit', code => {
+    process.exit(code ?? 0)
+  })
+
   Readable.from(JSON.stringify(context.output)).pipe(output.stdin)
-
-  setTimeout(() => {
-    output.kill('SIGTERM')
-
-    process.exit(0)
-  }, 1500).unref()
 }
 
 run().catch(error => {
