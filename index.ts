@@ -1,10 +1,10 @@
 #!/usr/bin/env ts-node
 
 import { spawn } from 'child_process'
-import fs from 'fs/promises'
+import { readFile } from 'fs/promises'
 import yaml from 'js-yaml'
 import { isEmpty } from 'lodash'
-import { join, resolve } from 'path'
+import { basename, extname, join, resolve } from 'path'
 import puppeteer, { Browser, ElementHandle, Page, PuppeteerLifeCycleEvent, Target } from 'puppeteer'
 import readline from 'readline'
 import { Readable } from 'stream'
@@ -183,7 +183,7 @@ const handlers: Record<Keyword, Handler> = {
 async function run() {
   const inputPath = resolve(join(process.cwd(), process.argv[2]))
 
-  const input = await fs.readFile(inputPath, 'utf-8')
+  const input = await readFile(inputPath, 'utf-8')
 
   const source = yaml.load(input) as object[]
 
@@ -227,7 +227,7 @@ async function run() {
 
   await context.browser.close()
 
-  const output = spawn('ts-node', ['output.ts'], { cwd: process.cwd(), stdio: 'pipe' })
+  const output = spawn('ts-node', [`${basename(inputPath, extname(inputPath))}.ts`], { cwd: process.cwd(), stdio: 'pipe' })
 
   output.on('exit', code => {
     process.exit(code ?? 0)
