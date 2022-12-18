@@ -195,9 +195,7 @@ const handlers: Record<Keyword, Handler> = {
 }
 
 async function run() {
-  const inputPath = isAbsolute(process.argv[2])
-    ? process.argv[2]
-    : resolve(join(process.cwd(), process.argv[2]))
+  const inputPath = resolve(join(process.cwd(), process.argv[2]))
 
   const input = await readFile(inputPath, 'utf-8')
 
