@@ -12,6 +12,7 @@ import { promisify } from 'util'
 
 const kc = require('keychain')
 
+const dp = promisify(kc.deletePassword).bind(kc)
 const gp = promisify(kc.getPassword).bind(kc)
 const sp = promisify(kc.setPassword).bind(kc)
 
@@ -33,6 +34,7 @@ type FocusStatement = ['focus', string]
 type OpenStatement = ['open', url]
 type PasswordStatement = ['password', { account: string, service: string, name: string }]
 type ReadStatement = ['read', { question: string, name: string }]
+type ResetPasswordStatement = ['reset-password', { account: string, service: string, name: string }]
 type SleepStatement = ['sleep', number]
 type TypeStatement = ['type', string | { name: string }]
 type WaitNavStatement = ['wait-navigation', PuppeteerLifeCycleEvent | undefined]
@@ -47,6 +49,7 @@ type Statement =
   | OpenStatement
   | PasswordStatement
   | ReadStatement
+  | ResetPasswordStatement
   | SleepStatement
   | TypeStatement
   | WaitNavStatement
@@ -130,6 +133,17 @@ const handlers: Record<Keyword, Handler> = {
     }, statement[1].question) as string
 
     context.vars[statement[1].name] = value
+  },
+  'reset-password': async ([, { account, service, name }]: PasswordStatement, context) => {
+    try {
+      delete context.vars[name]
+
+      await dp({ account, service, type: 'internet' })
+    } catch (err: any) {
+      if (!isEmpty(err) && err.code !== 'PasswordNotFound') {
+        throw err
+      }
+    }
   },
   sleep: async (statement: SleepStatement, context) => {
     await context.pages[0].waitForTimeout(statement[1] * 1000)
