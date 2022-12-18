@@ -4,7 +4,7 @@ import { spawn } from 'child_process'
 import { readFile } from 'fs/promises'
 import yaml from 'js-yaml'
 import { isEmpty } from 'lodash'
-import { basename, extname, join, resolve } from 'path'
+import { basename, extname, isAbsolute, join, resolve } from 'path'
 import puppeteer, { Browser, ElementHandle, Page, PuppeteerLifeCycleEvent, Target } from 'puppeteer'
 import readline from 'readline'
 import { Readable } from 'stream'
@@ -195,7 +195,9 @@ const handlers: Record<Keyword, Handler> = {
 }
 
 async function run() {
-  const inputPath = resolve(join(process.cwd(), process.argv[2]))
+  const inputPath = isAbsolute(process.argv[2])
+    ? process.argv[2]
+    : resolve(join(process.cwd(), process.argv[2]))
 
   const input = await readFile(inputPath, 'utf-8')
 
