@@ -4,7 +4,7 @@ import { spawn } from 'child_process'
 import { readFile } from 'fs/promises'
 import yaml from 'js-yaml'
 import { isEmpty } from 'lodash'
-import { basename, extname, isAbsolute, join, resolve } from 'path'
+import { basename, extname, join, resolve } from 'path'
 import puppeteer, { Browser, ElementHandle, Page, PuppeteerLifeCycleEvent, Target } from 'puppeteer'
 import readline from 'readline'
 import { Readable } from 'stream'
@@ -106,6 +106,8 @@ const handlers: Record<Keyword, Handler> = {
   open: async ([, url]: OpenStatement, context) => {
     context.pages.unshift(await context.browser.newPage())
 
+    context.pages[0].setDefaultTimeout(120 * 1000)
+
     context.targets.unshift(context.pages[0].target())
 
     await context.pages[0].goto(url, { waitUntil: 'networkidle0' })
@@ -194,7 +196,7 @@ const handlers: Record<Keyword, Handler> = {
   }
 }
 
-async function run() {
+async function run () {
   const inputPath = resolve(join(process.cwd(), process.argv[2]))
 
   const input = await readFile(inputPath, 'utf-8')
