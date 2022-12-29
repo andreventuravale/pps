@@ -73,6 +73,7 @@ type Context = {
 
 type Handler<S extends Statement = any> = (statement: S, context: Context) => Promise<void>
 
+const TIMEOUT = 120 * 1000
 const handlers: Record<Keyword, Handler> = {
   'capture-clipboard': async (statement: CaptureClipboardStatement, context) => {
     const bc = await context.browser.defaultBrowserContext()
@@ -106,11 +107,11 @@ const handlers: Record<Keyword, Handler> = {
   open: async ([, url]: OpenStatement, context) => {
     context.pages.unshift(await context.browser.newPage())
 
-    context.pages[0].setDefaultTimeout(120 * 1000)
+    context.pages[0].setDefaultTimeout(TIMEOUT)
 
     context.targets.unshift(context.pages[0].target())
 
-    await context.pages[0].goto(url, { waitUntil: 'networkidle0' })
+    await context.pages[0].goto(url, { waitUntil: 'networkidle0', timeout: TIMEOUT })
   },
   password: async ([, { account, service, name }]: PasswordStatement, context) => {
     try {
@@ -159,20 +160,23 @@ const handlers: Record<Keyword, Handler> = {
   },
   wait: async (statement: WaitStatement, context) => {
     if (typeof statement[1] === 'string') {
-      context.query = await context.pages[0].waitForSelector(statement[1], { visible: true })
+      context.query = await context.pages[0].waitForSelector(statement[1], { visible: true, timeout: TIMEOUT })
     } else {
       if ('text' in statement[1]) {
-        context.query = await context.pages[0].waitForXPath(`//*[contains(.,'${(statement[1] as any).text}')]`, { visible: true }) as any
+        context.query = await context.pages[0].waitForXPath(`//*[contains(.,'${(statement[1] as any).text}')]`, { visible: true, timeout: TIMEOUT }) as any
       }
     }
   },
   'wait-navigation': async ([, waitUntil = 'networkidle0']: WaitNavStatement, context) => {
     await context.pages[0].waitForNavigation({
+      timeout: TIMEOUT,
       waitUntil
     })
   },
   'wait-new-target': async (statement: WaitNewTargetStatement, context) => {
-    const target = await context.browser.waitForTarget(async target => (await (await target.page())?.title()) === statement[1])
+    const target = await context.browser.waitForTarget(async target => (await (await target.page())?.title()) === statement[1], {
+      timeout: TIMEOUT
+    })
 
     const page = await target.page()
 
