@@ -74,6 +74,7 @@ type Context = {
 type Handler<S extends Statement = any> = (statement: S, context: Context) => Promise<void>
 
 const TIMEOUT = 120 * 1000
+
 const handlers: Record<Keyword, Handler> = {
   'capture-clipboard': async (statement: CaptureClipboardStatement, context) => {
     const bc = await context.browser.defaultBrowserContext()
