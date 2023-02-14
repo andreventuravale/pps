@@ -103,7 +103,11 @@ const handlers: Record<Keyword, Handler> = {
     }
   },
   focus: async (statement: FocusStatement, context) => {
-    await context.pages[0].focus(statement[1])
+    if (typeof statement[1] === 'string') {
+      await context.pages[0].click(statement[1])
+    } else {
+      await context.query?.focus()
+    }
   },
   open: async ([, url]: OpenStatement, context) => {
     context.pages.unshift(await context.browser.newPage())
